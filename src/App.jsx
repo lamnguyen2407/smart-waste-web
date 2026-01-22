@@ -2,7 +2,42 @@ import React, { useState, useEffect, useRef } from 'react';
 import { LayoutDashboard, Trash2, Map as MapIcon, BarChart3, Bell, Search, Plus, RotateCcw, Battery, Wifi, Filter, Download, AlertTriangle, CheckCircle, XCircle, MoreVertical, X, Calendar, ChevronDown, MapPin, Activity, Loader2 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import { createControlComponent } from "@react-leaflet/core";
+import "leaflet-routing-machine";
+import "leaflet-routing-machine/dist/leaflet-routing-machine.css";
 import { BINS_DATA, CHART_DATA_24H, BIN_TYPE_DATA } from './data';
+
+// --- COMPONENT VẼ ĐƯỜNG ĐI (ROUTING) ---
+const CreateRoutineMachineLayer = ({ bins }) => {
+  const binsToCollect = bins.filter(b => b.status === 'Fill' || b.fillLevel >= 85);
+  const depot = L.latLng(21.0285, 105.8542); // Hồ Gươm
+
+  if (binsToCollect.length === 0) return null;
+
+  const waypoints = [
+      depot,
+      ...binsToCollect.map(bin => L.latLng(bin.lat, bin.lng)),
+      depot
+  ];
+
+  const instance = L.Routing.control({
+    waypoints: waypoints,
+    lineOptions: {
+      styles: [{ color: "#3b82f6", weight: 6, opacity: 0.8 }]
+    },
+    show: false, 
+    addWaypoints: false,
+    routeWhileDragging: false,
+    fitSelectedRoutes: false,
+    showAlternatives: false,
+    createMarker: function() { return null; }
+  });
+
+  return instance;
+};
+
+const Routing = createControlComponent(CreateRoutineMachineLayer);
 
 // --- UTILS ---
 function MapUpdater({ center }) {
@@ -30,7 +65,6 @@ function useOnClickOutside(ref, handler) {
 
 // --- SUB-COMPONENTS ---
 
-// 1. Sidebar
 const Sidebar = ({ activeTab, setActiveTab }) => {
   const menuItems = [
     { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -76,7 +110,6 @@ const Sidebar = ({ activeTab, setActiveTab }) => {
   );
 };
 
-// 2. KPI Cards
 const KPICard = ({ title, value, subtext, icon: Icon, colorClass, iconBgClass }) => (
   <div className={`p-6 rounded-2xl text-white ${colorClass} relative overflow-hidden shadow-sm transition hover:-translate-y-1`}>
     <div className="relative z-10">
@@ -117,6 +150,7 @@ const AlertStatCard = ({ title, value, color }) => (
 // 3. Map Component
 const WasteMap = ({ data, height = "100%", zoom = 13 }) => {
   const center = data.length > 0 ? [data[0].lat, data[0].lng] : [21.0285, 105.8542];
+  const hasFillBins = data.some(b => b.status === 'Fill' || b.fillLevel >= 85);
 
   return (
     <MapContainer center={center} zoom={zoom} style={{ height: height, width: "100%", zIndex: 0 }}>
@@ -125,14 +159,17 @@ const WasteMap = ({ data, height = "100%", zoom = 13 }) => {
         attribution='&copy; OpenStreetMap'
       />
       <MapUpdater center={center} />
+
+      {hasFillBins && <Routing bins={data} />}
+
       {data.map((bin) => (
         <CircleMarker 
           key={bin.id} 
           center={[bin.lat, bin.lng]} 
-          radius={8}
+          radius={10}
           pathOptions={{ 
             color: 'white', 
-            fillColor: bin.fillLevel > 80 ? '#ef4444' : bin.fillLevel > 60 ? '#f59e0b' : '#10b981', 
+            fillColor: (bin.status === 'Fill' || bin.fillLevel >= 85) ? '#ef4444' : '#10b981', 
             fillOpacity: 1,
             weight: 2
           }}
@@ -142,10 +179,13 @@ const WasteMap = ({ data, height = "100%", zoom = 13 }) => {
               <h3 className="font-bold text-sm">{bin.name}</h3>
               <p className="text-xs text-gray-500 mb-2">{bin.id}</p>
               <div className="flex items-center gap-2 mb-1">
-                <span className={`w-2 h-2 rounded-full ${bin.fillLevel > 80 ? 'bg-red-500' : 'bg-green-500'}`}></span>
+                <span className={`w-2 h-2 rounded-full ${(bin.status === 'Fill' || bin.fillLevel >= 85) ? 'bg-red-500' : 'bg-green-500'}`}></span>
                 <span className="text-xs font-semibold">Fill: {bin.fillLevel}%</span>
               </div>
-              <p className="text-xs">Type: {bin.type}</p>
+              <p className="text-xs font-bold text-blue-600">
+                  {/* Logic hiển thị Popup cũng dựa hoàn toàn vào dữ liệu thật */}
+                  Predict: {bin.predictedLevel ? (bin.predictedLevel >= 85 ? 'FULL TOMORROW' : 'SAFE') : 'NO DATA'}
+              </p>
             </div>
           </Popup>
         </CircleMarker>
@@ -154,7 +194,6 @@ const WasteMap = ({ data, height = "100%", zoom = 13 }) => {
   );
 };
 
-// 4. Modal Add Bin
 const AddBinModal = ({ isOpen, onClose, onAdd }) => {
   if (!isOpen) return null;
   const handleSubmit = (e) => {
@@ -178,37 +217,13 @@ const AddBinModal = ({ isOpen, onClose, onAdd }) => {
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-full"><X size={20}/></button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-3">
-          <div>
-             <label className="text-xs font-bold text-gray-500 uppercase">Bin Name</label>
-             <input name="name" required placeholder="e.g. West Lake Point 1" className="w-full p-2 border border-gray-200 rounded-lg text-sm focus:outline-emerald-500" />
-          </div>
+          <div><label className="text-xs font-bold text-gray-500 uppercase">Bin Name</label><input name="name" required className="w-full p-2 border border-gray-200 rounded-lg text-sm" /></div>
           <div className="grid grid-cols-2 gap-3">
-             <div>
-               <label className="text-xs font-bold text-gray-500 uppercase">Lat</label>
-               <input name="lat" type="number" step="any" defaultValue="21.03" className="w-full p-2 border border-gray-200 rounded-lg text-sm" />
-             </div>
-             <div>
-               <label className="text-xs font-bold text-gray-500 uppercase">Lng</label>
-               <input name="lng" type="number" step="any" defaultValue="105.85" className="w-full p-2 border border-gray-200 rounded-lg text-sm" />
-             </div>
+             <div><label className="text-xs font-bold text-gray-500 uppercase">Lat</label><input name="lat" type="number" step="any" defaultValue="21.03" className="w-full p-2 border border-gray-200 rounded-lg text-sm" /></div>
+             <div><label className="text-xs font-bold text-gray-500 uppercase">Lng</label><input name="lng" type="number" step="any" defaultValue="105.85" className="w-full p-2 border border-gray-200 rounded-lg text-sm" /></div>
           </div>
-          <div>
-             <label className="text-xs font-bold text-gray-500 uppercase">Type</label>
-             <select name="type" className="w-full p-2 border border-gray-200 rounded-lg text-sm">
-               <option value="General">General Waste</option>
-               <option value="Recyclable">Recyclable</option>
-               <option value="Organic">Organic</option>
-               <option value="Hazardous">Hazardous</option>
-             </select>
-          </div>
-          <div>
-             <label className="text-xs font-bold text-gray-500 uppercase">Initial Status</label>
-             <select name="status" className="w-full p-2 border border-gray-200 rounded-lg text-sm">
-               <option value="Active">Active</option>
-               <option value="Maintenance">Maintenance</option>
-               <option value="Offline">Offline</option>
-             </select>
-          </div>
+          <div><label className="text-xs font-bold text-gray-500 uppercase">Type</label><select name="type" className="w-full p-2 border border-gray-200 rounded-lg text-sm"><option value="General">General</option><option value="Recyclable">Recyclable</option><option value="Organic">Organic</option><option value="Hazardous">Hazardous</option></select></div>
+          <div><label className="text-xs font-bold text-gray-500 uppercase">Initial Status</label><select name="status" className="w-full p-2 border border-gray-200 rounded-lg text-sm"><option value="Not Fill">Not Fill</option><option value="Fill">Fill</option></select></div>
           <button type="submit" className="w-full py-2 bg-emerald-500 text-white rounded-lg font-bold hover:bg-emerald-600 transition">Create Bin</button>
         </form>
       </div>
@@ -216,67 +231,71 @@ const AddBinModal = ({ isOpen, onClose, onAdd }) => {
   );
 };
 
-// --- MAIN APP (API READY + FULL UI) ---
+// --- MAIN APP ---
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   
-  // 1. DATA STATE: Bắt đầu bằng rỗng [] để chờ API
-  const [bins, setBins] = useState([]); 
-  const [loading, setLoading] = useState(true); // Trạng thái đang tải
+  // Khởi tạo bins bằng Data giả lập (để lúc đầu vào không bị trắng)
+  const initialData = BINS_DATA.map(b => ({
+      ...b,
+      status: b.fillLevel >= 85 ? 'Fill' : 'Not Fill',
+      predictedLevel: null, // Mặc định là null để biết là chưa có data từ model
+      lastUpdate: 'Just now'
+  }));
+
+  const [bins, setBins] = useState(initialData); 
+  const [loading, setLoading] = useState(false); 
   const [error, setError] = useState(null);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   
-  // States for filters
   const [filterType, setFilterType] = useState('All Types');
   const [filterStatus, setFilterStatus] = useState('All Status');
 
-  // --- HÀM GỌI API (QUAN TRỌNG) ---
+  // --- API CALL (ĐÃ BỎ BACKUP) ---
   const fetchBinData = async () => {
+    setLoading(true);
     try {
-        console.log("Fetching data from API...");
+        console.log("Connecting to Python Server...");
+        const response = await fetch('https://smart-waste-api-jo59.onrender.com/api/get-bins');
+        if (!response.ok) throw new Error('Failed to connect');
         
-        // --- GIẢ LẬP API DELAY ---
-        await new Promise(resolve => setTimeout(resolve, 800)); 
+        const data = await response.json();
+        console.log("Data received from Python:", data);
         
-        // Giả lập làm mới dữ liệu & chuẩn hóa status
-        const updatedMockData = BINS_DATA.map(b => ({
-            ...b,
-            fillLevel: Math.min(100, Math.max(0, b.fillLevel + Math.floor(Math.random() * 10) - 5)), // Tăng giảm ngẫu nhiên -5 đến +5
-            status: b.status === 'Normal' ? 'Active' : b.status // Chuẩn hóa status
-        }));
-        
-        setBins(updatedMockData);
-        setLoading(false);
+        // --- XỬ LÝ DỮ LIỆU TỪ MODEL ---
+        const processedData = data.map(b => {
+            // QUAN TRỌNG: Lấy đúng predictedLevel từ backend. KHÔNG TỰ CỘNG 5 NỮA.
+            const modelPrediction = b.predictedLevel; 
+            
+            // Nếu backend không gửi predictedLevel (undefined/null), modelPrediction sẽ là undefined/null.
+            
+            return {
+                ...b,
+                status: b.status || (b.fillLevel >= 85 ? 'Fill' : 'Not Fill'),
+                predictedLevel: modelPrediction 
+            };
+        });
 
+        setBins(processedData);
     } catch (err) {
-        console.error("Lỗi lấy dữ liệu:", err);
-        setError("Failed to fetch bin data");
+        console.error("Lỗi API:", err);
+        alert("⚠️ Không kết nối được Server Python. Hiển thị dữ liệu cũ.");
+    } finally {
         setLoading(false);
     }
   };
 
-  // useEffect: Chạy 1 lần khi mở web và Auto-refresh
-  useEffect(() => {
-    fetchBinData();
-    const interval = setInterval(() => {
-        fetchBinData();
-    }, 30000); // 30s refresh 1 lần
-    return () => clearInterval(interval);
-  }, []);
-
   const handleExport = () => {
-    const headers = "ID,Name,Type,Fill Level,Lat,Lng,Status\n";
-    const rows = bins.map(b => 
-      `${b.id},${b.name},${b.type},${b.fillLevel}%,${b.lat},${b.lng},${b.status}`
-    ).join("\n");
+    const headers = "ID,Name,Type,Fill Level,Predicted Next Day,Last Reading\n";
+    const rows = bins.map(b => `${b.id},${b.name},${b.type},${b.fillLevel}%,${b.predictedLevel || 'N/A'},${b.status}`).join("\n");
     const csvContent = "data:text/csv;charset=utf-8," + headers + rows;
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `smart_waste_data_${new Date().toISOString().slice(0,10)}.csv`);
+    link.setAttribute("download", `smart_waste_data.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -285,121 +304,61 @@ export default function App() {
   const filteredBins = bins.filter(bin => {
      const matchesSearch = bin.name.toLowerCase().includes(searchTerm.toLowerCase()) || bin.id.toLowerCase().includes(searchTerm.toLowerCase());
      const matchesType = filterType === 'All Types' || bin.type === filterType;
-     
-     // Status Filter Logic
      let matchesStatus = true;
-     if (filterStatus !== 'All Status') {
-         if (['Active', 'Maintenance', 'Offline'].includes(filterStatus)) {
-            matchesStatus = bin.status === filterStatus || (filterStatus === 'Active' && !['Maintenance', 'Offline'].includes(bin.status));
-         } else {
-             matchesStatus = bin.status === filterStatus;
-         }
-     }
-     
+     if (filterStatus !== 'All Status') matchesStatus = bin.status === filterStatus;
      return matchesSearch && matchesType && matchesStatus;
   });
 
   const handleAddBin = (newBinData) => {
     const newId = `BIN-00${bins.length + 1}`;
-    const newBin = { id: newId, ...newBinData, battery: 100, lastUpdate: 'Just now' };
-    setBins([newBin, ...bins]);
+    setBins([{ id: newId, ...newBinData, battery: 100, lastUpdate: 'Just now', status: 'Not Fill' }, ...bins]);
     setIsModalOpen(false);
   };
 
   const handleDeleteBin = (id) => {
-    if(window.confirm('Are you sure you want to delete this bin?')) {
-      setBins(bins.filter(b => b.id !== id));
-    }
+    if(window.confirm('Delete bin?')) setBins(bins.filter(b => b.id !== id));
   };
-
-  // --- LOADING SCREEN ---
-  if (loading && bins.length === 0) {
-      return (
-          <div className="flex items-center justify-center h-screen bg-gray-50 flex-col gap-4">
-              <Loader2 className="animate-spin text-emerald-500" size={48} />
-              <p className="text-gray-500 font-medium animate-pulse">Connecting to IoT Sensors...</p>
-          </div>
-      );
-  }
 
   // --- VIEWS ---
 
   const DashboardView = () => (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex justify-between items-end">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-800">Smart Waste Monitoring</h2>
-          <p className="text-gray-500 text-sm">Real-time IoT bin management dashboard</p>
-        </div>
+        <div><h2 className="text-2xl font-bold text-gray-800">Smart Waste Monitoring</h2><p className="text-gray-500 text-sm">Real-time IoT dashboard</p></div>
         <div className="flex gap-3">
-          <button onClick={fetchBinData} className="p-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition" title="Refresh Data"><RotateCcw size={20} /></button>
+          <button onClick={fetchBinData} className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition font-medium shadow-sm"><RotateCcw size={18} /> Refresh</button>
           <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition shadow-sm font-medium"><Plus size={18} /> Add Bin</button>
         </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KPICard title="Total Bins" value={bins.length} subtext={`${bins.length} sensors active`} icon={Trash2} colorClass="bg-blue-500" iconBgClass="bg-blue-400" />
+        <KPICard title="Total Bins" value={bins.length} subtext="Active sensors" icon={Trash2} colorClass="bg-blue-500" iconBgClass="bg-blue-400" />
         <KPICard title="Average Fill" value={`${Math.round(bins.reduce((acc, curr) => acc + curr.fillLevel, 0) / (bins.length || 1))}%`} subtext="Real-time avg" icon={BarChart3} colorClass="bg-emerald-500" iconBgClass="bg-emerald-400" />
-        <KPICard title="Critical Bins" value={bins.filter(b => b.fillLevel >= 80).length} subtext="≥80% full" icon={AlertTriangle} colorClass="bg-amber-500" iconBgClass="bg-amber-400" />
-        <KPICard title="Low Battery" value={bins.filter(b => b.battery < 20).length} subtext="<20% battery" icon={Battery} colorClass="bg-red-500" iconBgClass="bg-red-400" />
+        <KPICard title="Critical (Fill)" value={bins.filter(b => b.status === 'Fill').length} subtext="Predicted Overflow" icon={AlertTriangle} colorClass="bg-red-500" iconBgClass="bg-red-400" />
+        <KPICard title="Low Battery" value={bins.filter(b => b.battery < 20).length} subtext="<20% battery" icon={Battery} colorClass="bg-orange-500" iconBgClass="bg-orange-400" />
       </div>
       <div className="grid grid-cols-12 gap-6">
         <div className="col-span-8 bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col h-[500px]">
-          <div className="flex justify-between items-center mb-4 px-2">
-            <h3 className="font-bold text-gray-700 flex items-center gap-2"><MapIcon size={18} className="text-emerald-500" /> Live Map</h3>
-            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full font-medium">{filteredBins.length} bins shown</span>
-          </div>
+          <div className="flex justify-between items-center mb-4 px-2"><h3 className="font-bold text-gray-700 flex items-center gap-2"><MapIcon size={18} className="text-emerald-500" /> Live Map</h3><span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full font-medium">{filteredBins.length} bins shown</span></div>
           <div className="flex-1 rounded-xl overflow-hidden border border-gray-100 relative z-0"><WasteMap data={filteredBins} /></div>
           
           <div className="mt-4 flex gap-3 px-2">
-             <div className="flex-1 relative">
-                <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
-                <input 
-                  value={searchTerm} 
-                  onChange={(e) => setSearchTerm(e.target.value)} 
-                  type="text" 
-                  placeholder="Search bins..." 
-                  className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-emerald-500 transition" 
-                />
-             </div>
-             <select 
-                value={filterType}
-                onChange={(e) => setFilterType(e.target.value)} 
-                className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600 outline-none"
-             >
-                <option>All Types</option><option>General</option><option>Recyclable</option><option>Organic</option><option>Hazardous</option>
-             </select>
-             <select 
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)} 
-                className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600 outline-none"
-             >
-                <option>All Status</option><option>Active</option><option>Maintenance</option><option>Offline</option>
-             </select>
+             <div className="flex-1 relative"><Search className="absolute left-3 top-2.5 text-gray-400" size={18} /><input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} type="text" placeholder="Search bins..." className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-emerald-500 transition" /></div>
+             <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 outline-none"><option>All Types</option><option>General</option><option>Recyclable</option><option>Organic</option><option>Hazardous</option></select>
+             <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 outline-none"><option>All Status</option><option>Fill</option><option>Not Fill</option></select>
           </div>
         </div>
         <div className="col-span-4 space-y-6 h-[500px] flex flex-col">
           <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex-1">
             <h3 className="font-bold text-gray-700 mb-4 text-sm">Fill Level Trends (24h)</h3>
-            <div className="h-[120px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={CHART_DATA_24H}>
-                  <defs><linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/><stop offset="95%" stopColor="#10b981" stopOpacity={0}/></linearGradient></defs>
-                  <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                  <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9ca3af'}} />
-                  <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#9ca3af'}} />
-                  <Area type="monotone" dataKey="value" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorValue)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+            <div className="h-[120px] w-full"><ResponsiveContainer width="100%" height="100%"><AreaChart data={CHART_DATA_24H}><defs><linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/><stop offset="95%" stopColor="#10b981" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" /><XAxis dataKey="time" axisLine={false} tickLine={false} tick={{fontSize: 10}} /><YAxis axisLine={false} tickLine={false} tick={{fontSize: 10}} /><Area type="monotone" dataKey="value" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorValue)" /></AreaChart></ResponsiveContainer></div>
           </div>
           <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex-1">
-             <h3 className="font-bold text-gray-700 mb-2 text-sm text-amber-600 flex items-center gap-2"><Bell size={14} /> Active Alerts</h3>
+             <h3 className="font-bold text-gray-700 mb-2 text-sm text-amber-600 flex items-center gap-2"><Bell size={14} /> Predictions Alerts</h3>
              <div className="flex flex-col gap-2 mt-2 overflow-y-auto h-[120px]">
-                {bins.filter(b => b.fillLevel >= 80).map(bin => (
-                  <div key={bin.id} className="p-3 bg-red-50 border-l-4 border-red-500 rounded-r-md"><p className="text-xs font-bold text-red-700">Critical Full</p><p className="text-[10px] text-red-600">{bin.name} is {bin.fillLevel}% full</p></div>
+                {bins.filter(b => b.status === 'Fill').map(bin => (
+                  <div key={bin.id} className="p-3 bg-red-50 border-l-4 border-red-500 rounded-r-md"><p className="text-xs font-bold text-red-700">Bin Full (Predicted)</p><p className="text-[10px] text-red-600">{bin.name} will overflow tomorrow.</p></div>
                 ))}
-                {bins.filter(b => b.fillLevel < 80).length === bins.length && <div className="text-center text-gray-400 text-xs mt-4">No critical alerts</div>}
+                {bins.filter(b => b.status === 'Fill').length === 0 && <div className="text-center text-gray-400 text-xs mt-4">All bins are safe for tomorrow.</div>}
              </div>
           </div>
         </div>
@@ -410,216 +369,80 @@ export default function App() {
   const BinManagementView = () => (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-800">Bin Management</h2>
-          <p className="text-gray-500 text-sm">Add, edit, and manage all waste bins</p>
+        <div><h2 className="text-2xl font-bold text-gray-800">Bin Management</h2><p className="text-gray-500 text-sm">Add, edit, and manage all waste bins</p></div>
+        <div className="flex gap-2">
+            <button onClick={fetchBinData} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-sm font-medium"><RotateCcw size={18} /> Update Data (Live)</button>
+            <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition shadow-sm font-medium"><Plus size={18} /> Add New Bin</button>
         </div>
-        <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition shadow-sm font-medium">
-           <Plus size={18} /> Add New Bin
-        </button>
       </div>
-
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden min-h-[400px]">
         <div className="p-4 flex gap-4 items-center">
-           <div className="flex-1 relative">
-              <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
-              <input 
-                value={searchTerm} 
-                onChange={(e) => setSearchTerm(e.target.value)} 
-                type="text" 
-                placeholder="Search by name, ID, or location..." 
-                className="w-full pl-10 pr-4 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500" 
-              />
-           </div>
-           <select 
-             value={filterType}
-             onChange={(e) => setFilterType(e.target.value)} 
-             className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 focus:outline-none focus:border-indigo-500 min-w-[140px]"
-           >
-              <option>All Types</option>
-              <option>General</option>
-              <option>Recyclable</option>
-              <option>Organic</option>
-              <option>Hazardous</option>
-           </select>
-           <select 
-             value={filterStatus}
-             onChange={(e) => setFilterStatus(e.target.value)} 
-             className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 focus:outline-none focus:border-indigo-500 min-w-[140px]"
-           >
-              <option>All Status</option>
-              <option>Active</option>
-              <option>Maintenance</option>
-              <option>Offline</option>
-           </select>
+           <div className="flex-1 relative"><Search className="absolute left-3 top-2.5 text-gray-400" size={18} /><input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} type="text" placeholder="Search..." className="w-full pl-10 pr-4 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none" /></div>
+           <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 outline-none"><option>All Types</option><option>General</option><option>Recyclable</option><option>Organic</option><option>Hazardous</option></select>
+           <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 outline-none"><option>All Status</option><option>Fill</option><option>Not Fill</option></select>
         </div>
-
         <div className="w-full text-left">
            <div className="flex bg-white text-gray-500 text-xs font-semibold border-b border-gray-100 px-4 py-3">
-              <div className="w-24">Bin ID</div>
-              <div className="flex-1">Name</div>
-              <div className="flex-1">Location</div>
-              <div className="w-24">Type</div>
-              <div className="w-32">Fill Level</div>
+              <div className="w-24">Bin ID</div><div className="flex-1">Name</div><div className="w-24">Type</div>
+              <div className="w-32">Fill Level (Now)</div>
+              {/* CỘT PREDICTED (ĐÃ SỬA: DÙNG DATA GỐC, KHÔNG CỘNG 5) */}
+              <div className="w-40 text-center">Predicted Next Day</div>
               <div className="w-24">Battery</div>
-              <div className="w-24">Status</div>
+              {/* CỘT LAST READING (ĐÃ KHÔI PHỤC) */}
               <div className="w-32">Last Reading</div>
               <div className="w-16 text-right">Actions</div>
            </div>
-
            <div className="divide-y divide-gray-100 text-sm text-gray-700">
              {filteredBins.length > 0 ? filteredBins.map((bin) => (
                <div key={bin.id} className="flex items-center hover:bg-gray-50 transition px-4 py-4">
                  <div className="w-24 font-bold text-gray-800">{bin.id}</div>
                  <div className="flex-1 font-medium">{bin.name}</div>
-                 <div className="flex-1 text-gray-500 truncate pr-4">Lat: {bin.lat.toFixed(4)}, Lng: {bin.lng.toFixed(4)}</div>
                  <div className="w-24"><span className="px-2 py-1 bg-gray-100 rounded text-xs text-gray-600 border border-gray-200">{bin.type}</span></div>
-                 <div className="w-32">
-                    <div className="flex items-center gap-2">
-                      <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full ${bin.fillLevel > 80 ? 'bg-red-500' : bin.fillLevel > 50 ? 'bg-amber-400' : 'bg-emerald-500'}`} style={{ width: `${bin.fillLevel}%` }}></div>
-                      </div>
-                      <span className="text-xs font-medium">{bin.fillLevel}%</span>
-                    </div>
+                 <div className="w-32"><div className="flex items-center gap-2"><div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full ${bin.fillLevel >= 85 ? 'bg-red-500' : 'bg-emerald-500'}`} style={{ width: `${bin.fillLevel}%` }}></div></div><span className="text-xs font-medium">{bin.fillLevel}%</span></div></div>
+                 
+                 {/* PREDICTED UI (Hiển thị N/A nếu model không trả về) */}
+                 <div className="w-40 text-center">
+                    {bin.predictedLevel !== undefined && bin.predictedLevel !== null ? (
+                        <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-bold border uppercase tracking-wide 
+                            ${bin.predictedLevel >= 85 || bin.status === 'Fill' 
+                                ? 'bg-red-50 text-red-600 border-red-200' 
+                                : 'bg-green-50 text-green-600 border-green-200'
+                            }`}>
+                            {bin.predictedLevel >= 85 || bin.status === 'Fill' ? <AlertTriangle size={12}/> : <CheckCircle size={12}/>}
+                            {bin.predictedLevel >= 85 || bin.status === 'Fill' ? 'OVERFLOW' : 'SAFE'}
+                        </span>
+                    ) : (
+                        <span className="text-xs text-gray-400 italic">N/A (No Model)</span>
+                    )}
                  </div>
-                 <div className="w-24">
-                   <div className="flex items-center gap-1 text-gray-500">
-                     <Battery size={14} className={bin.battery < 20 ? 'text-red-500' : 'text-gray-400'} />
-                     <span className="text-xs">{bin.battery}%</span>
-                   </div>
-                 </div>
-                 <div className="w-24">
-                   <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wide
-                     ${bin.status === 'Offline' ? 'bg-gray-100 text-gray-600 border-gray-200' : 
-                       bin.status === 'Maintenance' ? 'bg-orange-50 text-orange-600 border-orange-100' :
-                       bin.fillLevel > 80 ? 'bg-red-50 text-red-600 border-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100'
-                     }`}>
-                     {bin.status === 'Active' && bin.fillLevel > 80 ? 'Critical' : bin.status}
-                   </span>
-                 </div>
+
+                 <div className="w-24"><div className="flex items-center gap-1 text-gray-500"><Battery size={14} className={bin.battery < 20 ? 'text-red-500' : 'text-gray-400'} /><span className="text-xs">{bin.battery}%</span></div></div>
                  <div className="w-32 text-xs text-gray-400">{bin.lastUpdate}</div>
-                 <div className="w-16 flex justify-end">
-                   <button onClick={() => handleDeleteBin(bin.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition"><Trash2 size={16}/></button>
-                 </div>
+                 <div className="w-16 flex justify-end"><button onClick={() => handleDeleteBin(bin.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition"><Trash2 size={16}/></button></div>
                </div>
-             )) : (
-                <div className="flex flex-col items-center justify-center py-20 text-gray-400">
-                   <Trash2 size={48} className="mb-4 opacity-20" />
-                   <p className="text-sm">No bins found. Click "Add New Bin" to get started.</p>
-                </div>
-             )}
+             )) : (<div className="flex flex-col items-center justify-center py-20 text-gray-400"><Trash2 size={48} className="mb-4 opacity-20" /><p className="text-sm">No bins found.</p></div>)}
            </div>
         </div>
-      </div>
-
-      <div className="grid grid-cols-4 gap-6">
-         <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
-             <p className="text-xs text-gray-500 font-semibold mb-1">Total Bins</p>
-             <h3 className="text-2xl font-bold text-gray-800">{bins.length}</h3>
-         </div>
-         <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
-             <p className="text-xs text-emerald-600 font-semibold mb-1">Active</p>
-             <h3 className="text-2xl font-bold text-emerald-600">{bins.filter(b => b.status === 'Active' || b.status === 'Normal' || b.status === 'Warning' || b.status === 'Critical').length}</h3>
-         </div>
-         <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
-             <p className="text-xs text-orange-500 font-semibold mb-1">Maintenance</p>
-             <h3 className="text-2xl font-bold text-orange-500">{bins.filter(b => b.status === 'Maintenance').length}</h3>
-         </div>
-         <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
-             <p className="text-xs text-red-500 font-semibold mb-1">Offline</p>
-             <h3 className="text-2xl font-bold text-red-500">{bins.filter(b => b.status === 'Offline').length}</h3>
-         </div>
       </div>
     </div>
   );
 
   const FullMapView = () => (
     <div className="h-full flex flex-col space-y-4 animate-in fade-in duration-500">
-        <div className="flex justify-between items-end">
-           <div>
-               <h2 className="text-2xl font-bold text-gray-800">Map View</h2>
-               <p className="text-gray-500 text-sm">Spatial visualization of all bins</p>
-           </div>
-           <div className="flex gap-2">
-               <span className="px-3 py-1 bg-emerald-50 text-emerald-700 text-xs font-medium rounded-full border border-emerald-100 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> Normal</span>
-               <span className="px-3 py-1 bg-amber-50 text-amber-700 text-xs font-medium rounded-full border border-amber-100 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400"></span> Warning</span>
-               <span className="px-3 py-1 bg-red-50 text-red-700 text-xs font-medium rounded-full border border-red-100 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500"></span> Critical</span>
-           </div>
-        </div>
-
         <div className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm flex gap-4">
-            <div className="flex-1 relative">
-               <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
-               <input 
-                  value={searchTerm} 
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search bins on map..." 
-                  className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-emerald-500" 
-               />
-            </div>
-            <select 
-                value={filterType}
-                onChange={(e) => setFilterType(e.target.value)} 
-                className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 min-w-[140px] focus:outline-none"
-            >
-                <option>All Types</option>
-                <option>General</option>
-                <option>Recyclable</option>
-                <option>Organic</option>
-                <option>Hazardous</option>
-            </select>
-            <select className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 min-w-[140px] focus:outline-none">
-                <option>All Levels</option>
-                <option>Normal (&lt;60%)</option>
-                <option>Warning (60-80%)</option>
-                <option>Critical (&gt;80%)</option>
-            </select>
+            <div className="flex-1 relative"><Search className="absolute left-3 top-2.5 text-gray-400" size={18} /><input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Search bins on map..." className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none" /></div>
         </div>
-
         <div className="flex-1 grid grid-cols-12 gap-6 min-h-0">
             <div className="col-span-9 bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden relative">
                 <WasteMap data={filteredBins} height="100%" />
             </div>
-
             <div className="col-span-3 flex flex-col gap-6 h-full">
                 <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
-                    <h3 className="font-bold text-gray-700 flex items-center gap-2 mb-4">
-                        <MapIcon size={18} className="text-blue-500" /> Map Stats
-                    </h3>
+                    <h3 className="font-bold text-gray-700 flex items-center gap-2 mb-4"><MapIcon size={18} className="text-blue-500" /> Map Stats</h3>
                     <div className="space-y-3">
-                        <div className="flex justify-between items-center text-sm">
-                            <span className="text-gray-500">Total Mapped</span>
-                            <span className="font-bold text-gray-800">{bins.length}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-sm">
-                            <span className="text-gray-500">Filtered</span>
-                            <span className="font-bold text-blue-600">{filteredBins.length}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-sm">
-                            <span className="text-gray-500">Critical</span>
-                            <span className="font-bold text-red-500">{filteredBins.filter(b => b.fillLevel > 80).length}</span>
-                        </div>
+                        <div className="flex justify-between items-center text-sm"><span className="text-gray-500">Total Bins</span><span className="font-bold text-gray-800">{bins.length}</span></div>
+                        <div className="flex justify-between items-center text-sm"><span className="text-gray-500">Need Collection</span><span className="font-bold text-red-500">{filteredBins.filter(b => b.status === 'Fill').length}</span></div>
                     </div>
-                </div>
-
-                <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex-1 flex flex-col overflow-hidden">
-                     <h3 className="font-bold text-gray-700 mb-4">Bins on Map</h3>
-                     <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                         {filteredBins.length > 0 ? filteredBins.map(bin => (
-                             <div key={bin.id} className="p-3 border border-gray-100 rounded-xl hover:bg-gray-50 transition cursor-pointer group">
-                                 <div className="flex justify-between items-start mb-1">
-                                     <span className="font-semibold text-sm text-gray-800">{bin.name}</span>
-                                     <span className={`w-2 h-2 rounded-full ${bin.fillLevel > 80 ? 'bg-red-500' : bin.fillLevel > 60 ? 'bg-amber-400' : 'bg-emerald-500'}`}></span>
-                                 </div>
-                                 <div className="flex justify-between items-center text-xs text-gray-500">
-                                     <span>{bin.type}</span>
-                                     <span className="font-medium">{bin.fillLevel}%</span>
-                                 </div>
-                             </div>
-                         )) : (
-                             <div className="text-center text-gray-400 text-sm mt-10">No bins within view</div>
-                         )}
-                     </div>
                 </div>
             </div>
         </div>
@@ -647,10 +470,7 @@ export default function App() {
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
             <div className="flex justify-between items-center">
-                <div>
-                    <h2 className="text-2xl font-bold text-gray-800">Analytics</h2>
-                    <p className="text-gray-500 text-sm">Insights and performance metrics</p>
-                </div>
+                <div><h2 className="text-2xl font-bold text-gray-800">Analytics</h2><p className="text-gray-500 text-sm">Insights and performance metrics</p></div>
                 <div className="flex gap-3">
                     <div className="relative" ref={dropdownRef}>
                         <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 flex items-center gap-2 hover:bg-gray-50 transition min-w-[160px] justify-between">
