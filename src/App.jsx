@@ -160,7 +160,14 @@ const WasteMap = ({ data, height = "100%", zoom = 13 }) => {
       />
       <MapUpdater center={center} />
 
-      {hasFillBins && <Routing bins={data} />}
+      {hasFillBins && (
+    <Routing 
+        // Thêm key dựa trên số lượng bin đầy
+        // Khi số lượng thay đổi -> React sẽ xóa đường cũ, vẽ đường mới ngay lập tức
+        key={data.filter(b => b.status === 'Fill' || b.fillLevel >= 85).length} 
+        bins={data} 
+    />
+)}
 
       {data.map((bin) => (
         <CircleMarker 
@@ -287,6 +294,19 @@ export default function App() {
         setLoading(false);
     }
   };
+
+  useEffect(() => {
+    // 1. Gọi ngay khi vừa vào trang
+    fetchBinData();
+
+    // 2. Cài đặt tự động gọi lại sau mỗi 15 giây (15000ms)
+    const interval = setInterval(() => {
+        fetchBinData();
+    }, 10000);
+
+    // 3. Dọn dẹp khi tắt trang (để tránh lỗi)
+    return () => clearInterval(interval);
+  }, []);
 
   const handleExport = () => {
     const headers = "ID,Name,Type,Fill Level,Predicted Next Day,Last Reading\n";
