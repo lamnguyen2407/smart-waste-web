@@ -8,36 +8,62 @@ import "leaflet-routing-machine";
 import "leaflet-routing-machine/dist/leaflet-routing-machine.css";
 import { BINS_DATA, CHART_DATA_24H, BIN_TYPE_DATA } from './data';
 
-// --- COMPONENT VẼ ĐƯỜNG ĐI (ROUTING) ---
-const CreateRoutineMachineLayer = ({ bins }) => {
-  const binsToCollect = bins.filter(b => b.status === 'Fill' || b.fillLevel >= 85);
-  const depot = L.latLng(21.0285, 105.8542); // Hồ Gươm
+// --- COMPONENT VẼ ĐƯỜNG ĐI (ROUTING) - ĐÃ FIX LỖI CRASH ---
+const Routing = ({ bins }) => {
+  const map = useMap(); // Lấy instance bản đồ trực tiếp
 
-  if (binsToCollect.length === 0) return null;
+  useEffect(() => {
+    if (!map) return;
 
-  const waypoints = [
+    // 1. Lọc danh sách thùng cần thu gom
+    const binsToCollect = bins.filter(b => b.status === 'Fill' || b.fillLevel >= 85);
+    if (binsToCollect.length === 0) return;
+
+    // 2. Tạo điểm đi và đến
+    const depot = L.latLng(21.0285, 105.8542); // Hồ Gươm
+    const waypoints = [
       depot,
       ...binsToCollect.map(bin => L.latLng(bin.lat, bin.lng)),
       depot
-  ];
+    ];
 
-  const instance = L.Routing.control({
-    waypoints: waypoints,
-    lineOptions: {
-      styles: [{ color: "#3b82f6", weight: 6, opacity: 0.8 }]
-    },
-    show: false, 
-    addWaypoints: false,
-    routeWhileDragging: false,
-    fitSelectedRoutes: false,
-    showAlternatives: false,
-    createMarker: function() { return null; }
-  });
+    // 3. Khởi tạo Routing Control
+    const routingControl = L.Routing.control({
+      waypoints: waypoints,
+      lineOptions: {
+        styles: [{ color: "#3b82f6", weight: 6, opacity: 0.8 }]
+      },
+      show: false, 
+      addWaypoints: false,
+      routeWhileDragging: false,
+      fitSelectedRoutes: false,
+      showAlternatives: false,
+      createMarker: function() { return null; },
+      // QUAN TRỌNG: Ép dùng HTTPS để không bị lỗi Mixed Content
+      router: L.Routing.osrmv1({
+          serviceUrl: 'https://router.project-osrm.org/route/v1' 
+      })
+    });
 
-  return instance;
+    // 4. Gắn vào bản đồ
+    routingControl.addTo(map);
+
+    // 5. Dọn dẹp (Cleanup) an toàn khi refresh
+    return () => {
+      try {
+        // Kiểm tra kỹ trước khi xóa để tránh lỗi "removeLayer of null"
+        if (map && routingControl) {
+            map.removeControl(routingControl);
+        }
+      } catch (e) {
+        // Bỏ qua lỗi nếu map đã bị hủy trước đó
+        console.warn("Routing cleanup warning:", e);
+      }
+    };
+  }, [map, bins]); // Chạy lại khi map hoặc danh sách thùng thay đổi
+
+  return null;
 };
-
-const Routing = createControlComponent(CreateRoutineMachineLayer);
 
 // --- UTILS ---
 function MapUpdater({ center }) {
