@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { LayoutDashboard, Trash2, Map as MapIcon, BarChart3, Bell, Search, Plus, RotateCcw, Battery, Wifi, Filter, Download, AlertTriangle, CheckCircle, XCircle, MoreVertical, X, Calendar, ChevronDown, MapPin, Activity, Loader2 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet';
@@ -147,10 +147,18 @@ const AlertStatCard = ({ title, value, color }) => (
   </div>
 );
 
-// 3. Map Component
+// 3. Map Component (ĐÃ SỬA LỖI MẤT ĐƯỜNG)
 const WasteMap = ({ data, height = "100%", zoom = 13 }) => {
   const center = data.length > 0 ? [data[0].lat, data[0].lng] : [21.0285, 105.8542];
-  const hasFillBins = data.some(b => b.status === 'Fill' || b.fillLevel >= 85);
+
+  // --- SỬA Ở ĐÂY: Dùng useMemo để tính toán danh sách thùng cần thu gom ---
+  // Mục đích: Chỉ khi nào có thùng mới bị đầy thì mới tính lại, còn refresh bình thường thì bỏ qua.
+  const binsToCollect = useMemo(() => {
+    return data.filter(b => b.status === 'Fill' || b.fillLevel >= 85);
+  }, [JSON.stringify(data.map(b => b.id + b.status))]); // Theo dõi sự thay đổi của ID và Status
+
+  // Tạo một cái "Key" duy nhất cho tuyến đường hiện tại
+  const routeKey = binsToCollect.map(b => b.id).sort().join(',');
 
   return (
     <MapContainer center={center} zoom={zoom} style={{ height: height, width: "100%", zIndex: 0 }}>
@@ -160,14 +168,15 @@ const WasteMap = ({ data, height = "100%", zoom = 13 }) => {
       />
       <MapUpdater center={center} />
 
-      {hasFillBins && (
-    <Routing 
-        // Thêm key dựa trên số lượng bin đầy
-        // Khi số lượng thay đổi -> React sẽ xóa đường cũ, vẽ đường mới ngay lập tức
-        key={data.filter(b => b.status === 'Fill' || b.fillLevel >= 85).length} 
-        bins={data} 
-    />
-)}
+      {/* Chỉ vẽ Routing khi có thùng đầy */}
+      {binsToCollect.length > 0 && (
+        <Routing 
+            // QUAN TRỌNG: Dùng routeKey làm key. 
+            // Nếu Key không đổi (danh sách thùng đầy vẫn thế) -> React KHÔNG gọi lại API chỉ đường -> Không bị chặn.
+            key={routeKey} 
+            bins={data} 
+        />
+      )}
 
       {data.map((bin) => (
         <CircleMarker 
@@ -190,7 +199,6 @@ const WasteMap = ({ data, height = "100%", zoom = 13 }) => {
                 <span className="text-xs font-semibold">Fill: {bin.fillLevel}%</span>
               </div>
               <p className="text-xs font-bold text-blue-600">
-                  {/* Logic hiển thị Popup cũng dựa hoàn toàn vào dữ liệu thật */}
                   Predict: {bin.predictedLevel ? (bin.predictedLevel >= 85 ? 'FULL TOMORROW' : 'SAFE') : 'NO DATA'}
               </p>
             </div>
